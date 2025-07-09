@@ -1,0 +1,93 @@
+- name: Configure Ubuntu system with nginx, cron, jq
+  hosts: ubuntu
+  become: yes
+  vars:
+    title: "Seems working"
+    uptime: 0
+    service_state_json: |
+      {
+        "title": "{{ title }}",
+        "uptime": {{ uptime }}
+      }
+  tasks:
+    # Установка пакетов nginx, jq и cron
+    - name: Ensure nginx, jq, and cron are installed
+      apt:
+        name:
+          - nginx
+          - jq
+          - cron
+        state: present
+        update_cache: yes
+
+    - name: Check if /opt/service_state.json exists
+      stat:
+        path: /opt/service_state.json
+      register: service_state_json_file
+
+    # Если файл не существует, создаем его с содержимым
+    - name: Create /opt/service_state.json with initial content if it does not exist
+      copy:
+        dest: /opt/service_state.json
+        content: "{{ service_state_json }}"
+        owner: root
+        group: root
+        mode: '0644'
+      when: not service_state_json_file.stat.exists
+
+    # Проверка и обновление title в файле, если изменилось
+    - name: Update title in /opt/service_state.json if title has changed
+      copy:
+        dest: /opt/service_state.json
+        content: "{{ service_state_json }}"
+        owner: root
+        group: root
+        mode: '0644'
+      when: service_state_json_file.stat.exists and service_state_json_file.stat.size > 0
+      notify:
+        - Restart nginx
+
+    # Настройка nginx для отдачи содержимого /opt/service_state.json
+    - name: Configure nginx to serve /service_data
+      copy:
+        dest: /etc/nginx/conf.d/service_data.conf
+        content: |
+          server {
+              listen 80;
+              server_name localhost;
+
+              location /service_data {
+                  default_type application/json;
+                  alias /opt/service_state.json;
+              }
+          }
+      notify: Restart nginx
+
+    # Обеспечение того, что nginx запущен
+    - name: Ensure nginx is running
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+
+    # Обеспечение того, что cron запущен
+    - name: Ensure cron service is running and enabled
+      service:
+        name: cron
+        state: started
+        enabled: yes
+
+    # Добавление задания в cron для обновления uptime каждую минуту
+    - name: Add cron job to update uptime every minute
+      cron:
+        name: "Update uptime"
+        minute: "*"
+        user: root
+        job: uptime=$(($(ps -o etimes= -p $(cat /var/run/nginx.pid)) / 60)) && jq ".uptime = $uptime" /opt/service_state.json > /opt/service_state.json.tmp && mv /opt/service_state.json.tmp /opt/service_state.json
+
+  handlers:
+    # Перезапуск nginx, если изменился конфигурационный файл или файл service_state.json
+    - name: Restart nginx
+      service:
+        name: nginx
+        state: restarted

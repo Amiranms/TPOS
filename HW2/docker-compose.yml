@@ -1,0 +1,48 @@
+version: '4.34'
+
+services:
+  db:
+    image: mariadb:latest
+    container_name: db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: mstoyanau
+      MYSQL_DATABASE: TPOS2024
+    ports:
+       - "3306:3306"
+    networks:
+      - tpos_hw2
+    healthcheck:
+      test: mariadb -P 3306 -u root --password=$$MYSQL_ROOT_PASSWORD
+      start_period: 5s
+      interval: 5s
+      timeout: 5s
+      retries: 55
+
+  filler:
+    container_name: filler
+    build:
+      context: ./filler
+    depends_on:
+      db:
+        condition: "service_healthy"
+    volumes:
+      - ./data.csv:/app/data.csv
+    networks:
+      - tpos_hw2
+
+  web:
+    container_name: web
+    build:
+      context: ./web
+    depends_on:
+      - db
+      - filler
+    ports:
+      - "8000:8000"
+    networks:
+      - tpos_hw2
+
+networks:
+  tpos_hw2:
+    driver: bridge
